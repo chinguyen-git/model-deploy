@@ -267,11 +267,27 @@ def predict_weights(req: MarketDataRequest):
         # ---- 2. Build features ----
         feat_df = build_features(prices, volumes)
 
-        # Drop NaN rows (early dates won't have 63-day features)
-        feat_df = feat_df.dropna(subset=FINAL_FEATURES, how="any")
+        logger.info(f"  Features built: {feat_df.shape}, "
+                     f"NaN counts: {feat_df[FINAL_FEATURES].isna().sum().to_dict()}")
+
+        # Feature-type-aware NaN fill (matches training code in model_v05.py)
+        rsi_cols = [c for c in FINAL_FEATURES if "rsi_" in c]
+        obv_cols = [c for c in FINAL_FEATURES if "obv_" in c]
+        other_cols = [c for c in FINAL_FEATURES if c not in rsi_cols + obv_cols]
+
+        if rsi_cols:
+            feat_df[rsi_cols] = feat_df[rsi_cols].fillna(50)
+        if obv_cols:
+            feat_df[obv_cols] = feat_df[obv_cols].fillna(0)
+        if other_cols:
+            feat_df[other_cols] = feat_df[other_cols].fillna(0)
+
+        # Drop rows where ALL features are zero/NaN (truly empty rows)
+        feat_df = feat_df.dropna(subset=FINAL_FEATURES, how="all")
 
         # Keep last SEQ_LEN dates
         available_dates = sorted(feat_df["Date"].unique())
+        logger.info(f"  Available dates after NaN fill: {len(available_dates)}")
         if len(available_dates) < SEQ_LEN:
             raise HTTPException(
                 status_code=400,
